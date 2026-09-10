@@ -1,7 +1,7 @@
 "use strict";
 
-// Palette from github.com/LexSong/meowdoku-extension. It is two rings of six:
-// a light and a dark version of the same six hues (粉 橘 黃 青 藍 紫).
+// Palette from github.com/yocox/meowdoku/issues/1 ("bright12"). It is two rings
+// of six: a light and a dark version of the same six hues (紅 橘 黃 青 藍 紫).
 //
 // The order below looks shuffled but is not — it is the ring order permuted by
 // slot = (regionId * 7) % 12, baked in. Regions are handed out in order, so
@@ -11,18 +11,18 @@
 // the widest separation a 12-colour cycle allows. Re-sorting this list back
 // into hue order would silently destroy that, so don't.
 const REGION_COLORS = [
-  "#FF9CA9",  // 亮粉
-  "#A45C1D",  // 暗橘
-  "#BDC567",  // 亮黃
-  "#00865C",  // 暗青
-  "#61CBFB",  // 亮藍
-  "#7A60AD",  // 暗紫
-  "#AB505E",  // 暗粉
-  "#F5AA6B",  // 亮橘
-  "#777600",  // 暗黃
-  "#56D6BC",  // 亮青
-  "#007AAD",  // 暗藍
-  "#C7ACFF",  // 亮紫
+  "#FF9676",  // 亮紅
+  "#B66C00",  // 暗橘
+  "#BCDD76",  // 亮黃
+  "#009865",  // 暗青
+  "#41D1FF",  // 亮藍
+  "#946DC5",  // 暗紫
+  "#C25A6F",  // 暗紅
+  "#FDC35E",  // 亮橘
+  "#828900",  // 暗黃
+  "#4FEACF",  // 亮青
+  "#3584CD",  // 暗藍
+  "#FF9FDB",  // 粉桃
 ];
 
 // Same twelve, dimmed for crossed-out cells: OKLab lightness ×0.7, chroma ×0.5.
@@ -33,18 +33,18 @@ const REGION_COLORS = [
 // Precomputed because the input is a fixed list; see the extension's restyle.js
 // for the conversion.
 const REGION_COLORS_DIM = [
-  "#93666B",  // 亮粉
-  "#5B3B22",  // 暗橘
-  "#74784F",  // 亮黃
-  "#214D3A",  // 暗青
-  "#4E7B91",  // 亮藍
-  "#473C5F",  // 暗紫
-  "#5F363B",  // 暗粉
-  "#8E6C50",  // 亮橘
-  "#46461E",  // 暗黃
-  "#4B8073",  // 亮青
-  "#20485F",  // 暗藍
-  "#786D92",  // 亮紫
+  "#926253",  // 亮紅
+  "#664522",  // 暗橘
+  "#778659",  // 亮黃
+  "#275841",  // 暗青
+  "#467E93",  // 亮藍
+  "#57466D",  // 暗紫
+  "#6D3D45",  // 暗紅
+  "#957A50",  // 亮橘
+  "#4E5223",  // 暗黃
+  "#4F8C7F",  // 亮青
+  "#2F5071",  // 暗藍
+  "#946883",  // 粉桃
 ];
 
 const EMPTY = 0, MARK = 1, CAT = 2, HYPO = 3, WRONG = 4;

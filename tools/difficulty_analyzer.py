@@ -111,18 +111,18 @@ class Board:
 def _clr(color: int) -> str:
     """Region id → the colour a player sees. Must match REGION_COLORS in web/game.js."""
     return [
-        "亮粉",
+        "亮紅",
         "暗橘",
         "亮黃",
         "暗青",
         "亮藍",
         "暗紫",
-        "暗粉",
+        "暗紅",
         "亮橘",
         "暗黃",
         "亮青",
         "暗藍",
-        "亮紫",
+        "粉桃",
     ][color]
 
 
