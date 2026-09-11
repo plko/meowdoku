@@ -10,7 +10,11 @@
 // is still used exactly once while consecutive ids always land 5 slots apart —
 // the widest separation a 12-colour cycle allows. Re-sorting this list back
 // into hue order would silently destroy that, so don't.
-const REGION_COLORS = [
+//
+// This is the factory default. The active palette (REGION_COLORS below) can
+// be overwritten by the user via the palette editor in Settings; this array
+// is what "恢復預設" restores.
+const DEFAULT_REGION_COLORS = [
   "#FF9676",  // 亮紅
   "#B66C00",  // 暗橘
   "#BCDD76",  // 亮黃
@@ -30,9 +34,10 @@ const REGION_COLORS = [
 // that filter works in sRGB, which washes the light ring out to a flat grey
 // instead of a dimmer version of itself. OKLab's separate lightness and chroma
 // axes keep the hue, so a crossed-out cell still reads as its own region.
-// Precomputed because the input is a fixed list; see the extension's restyle.js
-// for the conversion.
-const REGION_COLORS_DIM = [
+// Precomputed because the input is a fixed list; a custom palette's dimmed
+// variant is instead computed at runtime by dimColor() below, using the same
+// OKLab math (verified to reproduce this table exactly).
+const DEFAULT_REGION_COLORS_DIM = [
   "#926253",  // 亮紅
   "#664522",  // 暗橘
   "#778659",  // 亮黃
@@ -47,10 +52,100 @@ const REGION_COLORS_DIM = [
   "#946883",  // 粉桃
 ];
 
+// Active palette. Starts as the defaults; loadPalette() below overwrites both
+// arrays in place if the user saved a custom palette in an earlier session.
+let REGION_COLORS = DEFAULT_REGION_COLORS.slice();
+let REGION_COLORS_DIM = DEFAULT_REGION_COLORS_DIM.slice();
+
 const EMPTY = 0, MARK = 1, CAT = 2, HYPO = 3, WRONG = 4;
 const HEARTS_MAX = 3;
 const DOUBLE_TAP_MS = 300;
 const DRAG_THRESHOLD_PX = 6;
+
+// ── Color math (sRGB <-> linear <-> OKLab) ──────────────────────────────────
+// Used to derive a dimmed variant of any user-chosen region color. Matrices
+// from Björn Ottosson's OKLab writeup; verified against DEFAULT_REGION_COLORS_DIM
+// above (same ×0.7 lightness / ×0.5 chroma scaling) before wiring this up.
+
+function hexToRgb(hex) {
+  const h = hex.replace("#", "");
+  return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
+}
+function rgbToHex(r, g, b) {
+  const h = (v) => v.toString(16).padStart(2, "0");
+  return `#${h(r)}${h(g)}${h(b)}`;
+}
+function srgbToLinear(c) {
+  c /= 255;
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+function linearToSrgb(c) {
+  c = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+  return Math.round(Math.min(1, Math.max(0, c)) * 255);
+}
+function linearRgbToOklab(r, g, b) {
+  const l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
+  const m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;
+  const s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
+  const l_ = Math.cbrt(l), m_ = Math.cbrt(m), s_ = Math.cbrt(s);
+  return {
+    L: 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+    a: 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+    b: 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+  };
+}
+function oklabToLinearRgb(L, a, b) {
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+  const l = l_ ** 3, m = m_ ** 3, s = s_ ** 3;
+  return {
+    r: 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    g: -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    b: -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+  };
+}
+function dimColor(hex) {
+  const { r, g, b } = hexToRgb(hex);
+  const lr = srgbToLinear(r), lg = srgbToLinear(g), lb = srgbToLinear(b);
+  let { L, a, b: bb } = linearRgbToOklab(lr, lg, lb);
+  L *= 0.7; a *= 0.5; bb *= 0.5;
+  const o = oklabToLinearRgb(L, a, bb);
+  return rgbToHex(linearToSrgb(o.r), linearToSrgb(o.g), linearToSrgb(o.b));
+}
+
+// ── Custom palette persistence ──────────────────────────────────────────────
+
+function loadPalette() {
+  try {
+    const raw = JSON.parse(localStorage.getItem("meowdoku_palette") || "null");
+    if (Array.isArray(raw) && raw.length === 12 && raw.every((c) => /^#[0-9a-fA-F]{6}$/.test(c))) {
+      REGION_COLORS = raw.slice();
+      REGION_COLORS_DIM = REGION_COLORS.map(dimColor);
+    }
+  } catch { }
+}
+function savePalette() {
+  try { localStorage.setItem("meowdoku_palette", JSON.stringify(REGION_COLORS)); } catch { }
+}
+function refreshBoardColors() {
+  if (!state.n) return;
+  for (let r = 0; r < state.n; r++) for (let c = 0; c < state.n; c++) updateCellView(r, c);
+}
+function setPaletteColor(idx, hex) {
+  REGION_COLORS[idx] = hex;
+  REGION_COLORS_DIM[idx] = dimColor(hex);
+  savePalette();
+  refreshBoardColors();
+}
+function resetPalette() {
+  REGION_COLORS = DEFAULT_REGION_COLORS.slice();
+  REGION_COLORS_DIM = DEFAULT_REGION_COLORS_DIM.slice();
+  try { localStorage.removeItem("meowdoku_palette"); } catch { }
+  renderPaletteEditor();
+  refreshBoardColors();
+}
+loadPalette();
 
 // User-facing toggles — persisted across sessions.
 const settings = (() => {
@@ -88,6 +183,8 @@ const state = {
   board: null,       // n x n array of EMPTY/MARK/CAT
   hearts: HEARTS_MAX,
   gameOver: false,
+  timerStart: null,     // Date.now() at first board interaction this level, or null
+  timerFrozenMs: null,  // elapsed ms once the timer has stopped (win/loss), or null while running
 };
 
 const el = {
@@ -95,23 +192,33 @@ const el = {
   levelButtons: document.getElementById("level-buttons"),
   screenSelect: document.getElementById("screen-select"),
   screenGame: document.getElementById("screen-game"),
+  appHeader: document.querySelector(".app-header"),
   board: document.getElementById("board"),
   gameTitle: document.getElementById("game-title"),
+  timer: document.getElementById("timer"),
   hearts: document.getElementById("hearts"),
   statusBanner: document.getElementById("status-banner"),
   btnBack: document.getElementById("btn-back"),
   btnRestart: document.getElementById("btn-restart"),
+  btnUndo: document.getElementById("btn-undo"),
+  btnRedo: document.getElementById("btn-redo"),
   winModal: document.getElementById("win-modal"),
+  winTime: document.getElementById("win-time"),
   btnNextLevel: document.getElementById("btn-next-level"),
   btnReplay: document.getElementById("btn-replay"),
   btnModalBack: document.getElementById("btn-modal-back"),
   helpModal: document.getElementById("help-modal"),
-  btnHelp: document.getElementById("btn-help"),
   btnHelpClose: document.getElementById("btn-help-close"),
+  btnToggleHypo: document.getElementById("btn-toggle-hypo"),
+  btnSettings: document.getElementById("btn-settings"),
+  settingsModal: document.getElementById("settings-modal"),
+  btnSettingsClose: document.getElementById("btn-settings-close"),
+  btnHelpOpen: document.getElementById("btn-help-open"),
   btnToggleSound: document.getElementById("btn-toggle-sound"),
   btnToggleVibrate: document.getElementById("btn-toggle-vibrate"),
   btnToggleAuto: document.getElementById("btn-toggle-auto"),
-  btnToggleHypo: document.getElementById("btn-toggle-hypo"),
+  paletteEditor: document.getElementById("palette-editor"),
+  btnPaletteReset: document.getElementById("btn-palette-reset"),
 };
 
 // ── Audio ────────────────────────────────────────────────────────────────────
@@ -173,26 +280,161 @@ function playWin() {
 
 function vibrate(ms) { if (settings.vibrate && navigator.vibrate) navigator.vibrate(ms); }
 
+// ── Timer ────────────────────────────────────────────────────────────────────
+// Starts on the player's first tap/drag on the board, not on level load — so
+// the clock doesn't punish thinking ahead before touching anything.
+
+let timerIntervalId = null;
+
+function formatElapsed(ms) {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+function updateTimerDisplay() {
+  if (!el.timer) return;
+  if (state.timerStart === null) { el.timer.textContent = "0:00"; return; }
+  const elapsed = state.timerFrozenMs !== null ? state.timerFrozenMs : Date.now() - state.timerStart;
+  el.timer.textContent = formatElapsed(elapsed);
+}
+function resetTimer() {
+  if (timerIntervalId) { clearInterval(timerIntervalId); timerIntervalId = null; }
+  state.timerStart = null;
+  state.timerFrozenMs = null;
+  updateTimerDisplay();
+}
+function startTimerIfNeeded() {
+  if (state.timerStart !== null) return;
+  state.timerStart = Date.now();
+  state.timerFrozenMs = null;
+  timerIntervalId = setInterval(updateTimerDisplay, 1000);
+  updateTimerDisplay();
+}
+function stopTimer() {
+  if (state.timerStart !== null && state.timerFrozenMs === null) {
+    state.timerFrozenMs = Date.now() - state.timerStart;
+  }
+  if (timerIntervalId) { clearInterval(timerIntervalId); timerIntervalId = null; }
+  updateTimerDisplay();
+}
+
+// ── Undo / redo ──────────────────────────────────────────────────────────────
+// Each move is a list of {r, c, prev, cur} cell diffs plus the hearts count
+// before/after. A "move" spans one user gesture (a tap, a drag, or a resolved
+// double-tap cat placement) so one Undo click reverts exactly what the player
+// perceives as one action.
+
+let undoStack = [];
+let redoStack = [];
+let currentMove = null;
+
+function beginMove() {
+  currentMove = { diffMap: new Map(), heartsBefore: state.hearts };
+}
+function setCell(r, c, val) {
+  if (currentMove) {
+    const key = r * 1000 + c;
+    if (!currentMove.diffMap.has(key)) currentMove.diffMap.set(key, { r, c, prev: state.board[r][c] });
+  }
+  state.board[r][c] = val;
+  updateCellView(r, c);
+}
+function endMove() {
+  if (!currentMove) return;
+  const diffs = [...currentMove.diffMap.values()]
+    .map((d) => ({ ...d, cur: state.board[d.r][d.c] }))
+    .filter((d) => d.prev !== d.cur);
+  const heartsBefore = currentMove.heartsBefore;
+  const heartsAfter = state.hearts;
+  currentMove = null;
+  if (diffs.length > 0 || heartsBefore !== heartsAfter) {
+    undoStack.push({ diffs, heartsBefore, heartsAfter });
+    redoStack = [];
+    updateUndoRedoButtons();
+  }
+}
+function pushUndoMove(diffs, heartsBefore, heartsAfter) {
+  const real = diffs.filter((d) => d.prev !== d.cur);
+  if (real.length === 0 && heartsBefore === heartsAfter) return;
+  undoStack.push({ diffs: real, heartsBefore, heartsAfter });
+  redoStack = [];
+  updateUndoRedoButtons();
+}
+function updateUndoRedoButtons() {
+  if (el.btnUndo) el.btnUndo.disabled = state.gameOver || undoStack.length === 0;
+  if (el.btnRedo) el.btnRedo.disabled = state.gameOver || redoStack.length === 0;
+}
+function doUndo() {
+  if (pendingTap) commitPendingTap();
+  if (state.gameOver || undoStack.length === 0) return;
+  const move = undoStack.pop();
+  for (const d of move.diffs) { state.board[d.r][d.c] = d.prev; updateCellView(d.r, d.c); }
+  state.hearts = move.heartsBefore;
+  renderHearts();
+  redoStack.push(move);
+  updateUndoRedoButtons();
+}
+function doRedo() {
+  if (state.gameOver || redoStack.length === 0) return;
+  const move = redoStack.pop();
+  for (const d of move.diffs) { state.board[d.r][d.c] = d.cur; updateCellView(d.r, d.c); }
+  state.hearts = move.heartsAfter;
+  renderHearts();
+  undoStack.push(move);
+  updateUndoRedoButtons();
+  if (state.hearts <= 0) triggerGameOver();
+  else checkWin();
+}
+function resetUndoRedo() {
+  undoStack = [];
+  redoStack = [];
+  currentMove = null;
+  if (pendingTap) { clearTimeout(pendingTap.timer); pendingTap = null; }
+  updateUndoRedoButtons();
+}
+
 // Per-cell DOM elements, indexed [row][col], created once per level load.
 let cellEls = [];
 
 function updateToggleUI() {
-  el.btnToggleSound.textContent = settings.sound ? "音效 🔊" : "音效 🔇";
-  el.btnToggleVibrate.textContent = settings.vibrate ? "振動 📳" : "振動 📴";
+  el.btnToggleSound.textContent = settings.sound ? "🔊" : "🔇";
+  el.btnToggleVibrate.textContent = settings.vibrate ? "📳" : "📴";
+  el.btnToggleAuto.textContent = settings.autoElim ? "開" : "關";
   el.btnToggleSound.classList.toggle("off", !settings.sound);
   el.btnToggleVibrate.classList.toggle("off", !settings.vibrate);
   el.btnToggleAuto.classList.toggle("off", !settings.autoElim);
   el.btnToggleHypo?.classList.toggle("off", !settings.hypo);
 }
 
+function renderPaletteEditor() {
+  if (!el.paletteEditor) return;
+  el.paletteEditor.innerHTML = "";
+  REGION_COLORS.forEach((color, idx) => {
+    const label = document.createElement("label");
+    label.className = "swatch";
+    label.title = `區域 ${String.fromCharCode(65 + idx)}`;
+    const input = document.createElement("input");
+    input.type = "color";
+    input.value = color;
+    input.addEventListener("input", () => setPaletteColor(idx, input.value));
+    label.appendChild(input);
+    el.paletteEditor.appendChild(label);
+  });
+}
+
 async function init() {
   // Bind all event listeners synchronously BEFORE any async operations so that
   // browser caching of an older JS file can never leave buttons unresponsive.
   updateToggleUI();
+  renderPaletteEditor();
+  updateUndoRedoButtons();
   try { history.replaceState({ screen: "select" }, ""); } catch { }
 
   el.btnBack.addEventListener("click", () => history.back());
   el.btnRestart.addEventListener("click", () => startLevel(state.n, state.levelIdx));
+  el.btnUndo?.addEventListener("click", doUndo);
+  el.btnRedo?.addEventListener("click", doRedo);
   el.btnNextLevel?.addEventListener("click", () => {
     el.winModal.classList.add("hidden");
     startLevel(state.n, state.levelIdx + 1);
@@ -206,7 +448,6 @@ async function init() {
     history.back();
   });
 
-  el.btnHelp?.addEventListener("click", () => el.helpModal.classList.remove("hidden"));
   el.btnHelpClose?.addEventListener("click", () => {
     el.helpModal.classList.add("hidden")
     settings.showHelp = false;
@@ -215,6 +456,17 @@ async function init() {
   el.helpModal?.addEventListener("click", (e) => {
     if (e.target === el.helpModal) el.helpModal.classList.add("hidden");
   });
+
+  el.btnSettings?.addEventListener("click", () => el.settingsModal.classList.remove("hidden"));
+  el.btnSettingsClose?.addEventListener("click", () => el.settingsModal.classList.add("hidden"));
+  el.settingsModal?.addEventListener("click", (e) => {
+    if (e.target === el.settingsModal) el.settingsModal.classList.add("hidden");
+  });
+  el.btnHelpOpen?.addEventListener("click", () => {
+    el.settingsModal.classList.add("hidden");
+    el.helpModal.classList.remove("hidden");
+  });
+  el.btnPaletteReset?.addEventListener("click", resetPalette);
 
   window.addEventListener("popstate", () => {
     if (!el.screenGame.classList.contains("hidden")) {
@@ -308,6 +560,9 @@ async function startLevel(n, idx) {
   state.hearts = HEARTS_MAX;
   state.gameOver = false;
 
+  resetUndoRedo();
+  resetTimer();
+
   el.gameTitle.textContent = `${n} x ${n} — 第 ${idx} 關`;
   el.statusBanner.classList.add("hidden");
   showGameScreen();
@@ -334,6 +589,7 @@ function parseLevel(text) {
 function showGameScreen() {
   el.screenSelect.classList.add("hidden");
   el.screenGame.classList.remove("hidden");
+  el.appHeader?.classList.add("hidden");
   // Push only when coming from the select screen; replace when already in-game (next level).
   if (history.state?.screen !== "game") history.pushState({ screen: "game" }, "");
   else history.replaceState({ screen: "game" }, "");
@@ -342,13 +598,8 @@ function showGameScreen() {
 function showSelectScreen() {
   el.screenGame.classList.add("hidden");
   el.screenSelect.classList.remove("hidden");
+  el.appHeader?.classList.remove("hidden");
   refreshDoneMarks();
-}
-
-function clearBoard() {
-  const n = state.n;
-  state.board = Array.from({ length: n }, () => Array(n).fill(EMPTY));
-  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) updateCellView(r, c);
 }
 
 function renderBoard() {
@@ -390,16 +641,21 @@ function checkWin() {
   for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (state.board[r][c] === CAT) cats++;
   if (cats === n) {
     state.gameOver = true;
+    stopTimer();
+    updateUndoRedoButtons();
     saveStars(state.n, state.levelIdx, state.hearts);
     playWin(); vibrate(300);
     const hasNext = state.levelIdx < state.sizes[state.n];
     el.btnNextLevel.style.display = hasNext ? "" : "none";
+    if (el.winTime) el.winTime.textContent = state.timerFrozenMs !== null ? `用時 ${formatElapsed(state.timerFrozenMs)}` : "";
     setTimeout(() => el.winModal.classList.remove("hidden"), 300);
   }
 }
 
 function triggerGameOver() {
   state.gameOver = true;
+  stopTimer();
+  updateUndoRedoButtons();
   el.statusBanner.textContent = "💔 掰了，按「重來」再試一次";
   el.statusBanner.className = "status-banner lose";
 }
@@ -411,7 +667,7 @@ function autoEliminate(r, c) {
   const n = state.n;
   const region = state.regions[r][c];
   const mark = (mr, mc) => {
-    if (state.board[mr][mc] === EMPTY) { state.board[mr][mc] = MARK; updateCellView(mr, mc); }
+    if (state.board[mr][mc] === EMPTY) setCell(mr, mc, MARK);
   };
   for (let j = 0; j < n; j++) if (j !== c) mark(r, j);
   for (let i = 0; i < n; i++) if (i !== r) mark(i, c);
@@ -428,34 +684,37 @@ function autoEliminate(r, c) {
 
 function attemptPlaceCat(r, c) {
   if (state.gameOver || state.board[r][c] === CAT || state.board[r][c] === WRONG) return;
+  beginMove();
   if (state.solution[r] === c) {
-    state.board[r][c] = CAT;
-    updateCellView(r, c);
+    setCell(r, c, CAT);
     playCat(); vibrate(100);
     if (settings.autoElim) autoEliminate(r, c);
+    endMove();
     checkWin();
   } else {
     state.hearts--;
+    setCell(r, c, WRONG);
     renderHearts();
-    state.board[r][c] = WRONG;
-    updateCellView(r, c);
     playWrong(); vibrate(200);
+    endMove();
     if (state.hearts <= 0) triggerGameOver();
   }
 }
 
-function toggleMark(r, c) {
-  if (state.gameOver || state.board[r][c] === CAT || state.board[r][c] === WRONG) return;
-  state.board[r][c] = state.board[r][c] === EMPTY ? MARK : EMPTY;
+function applyMarkToggle(r, c) {
+  const val = state.board[r][c] === EMPTY ? MARK : EMPTY;
+  state.board[r][c] = val;
   updateCellView(r, c);
   playMark(); vibrate(50);
+  return val;
 }
 
-function toggleHypo(r, c) {
-  if (state.gameOver || state.board[r][c] === CAT || state.board[r][c] === WRONG) return;
-  state.board[r][c] = state.board[r][c] === HYPO ? EMPTY : HYPO;
+function applyHypoToggle(r, c) {
+  const val = state.board[r][c] === HYPO ? EMPTY : HYPO;
+  state.board[r][c] = val;
   updateCellView(r, c);
   playMark(); vibrate(50);
+  return val;
 }
 
 // --- Pointer handling: single tap toggles a mark, double tap on the same
@@ -468,7 +727,7 @@ let dragTargetState = null;
 let dragOrigin = null;
 let lastPaintedKey = null;
 let startX = 0, startY = 0;
-let pendingTap = null; // { key, prevState, timer }
+let pendingTap = null; // { key, r, c, prevState, timer }
 let activeCellEl = null;
 
 function cellFromPoint(clientX, clientY) {
@@ -487,6 +746,7 @@ function onPointerDown(e) {
   const cell = cellFromPoint(e.clientX, e.clientY);
   if (!cell) return;
   e.preventDefault(); // only suppress default when pointer is actually over the board
+  startTimerIfNeeded();
 
   const startState = state.board[cell.r][cell.c];
   if (startState !== WRONG) {
@@ -517,6 +777,8 @@ function onPointerMove(e) {
     if (!moved && !leftOrigin) return;
     dragging = true;
     if (activeCellEl) { activeCellEl.classList.remove("active"); activeCellEl = null; }
+    if (pendingTap) commitPendingTap();
+    beginMove();
     paintDragCell(dragOrigin.r, dragOrigin.c);
   }
 
@@ -531,8 +793,7 @@ function paintDragCell(r, c) {
   if (state.board[r][c] === dragTargetState) return;
   const cur = state.board[r][c];
   if (settings.hypo ? (cur !== EMPTY && cur !== HYPO) : (cur !== EMPTY && cur !== MARK)) return;
-  state.board[r][c] = dragTargetState;
-  updateCellView(r, c);
+  setCell(r, c, dragTargetState);
   playMark(); vibrate(100);
 }
 
@@ -546,15 +807,17 @@ function onPointerUp(e) {
   dragging = false;
   dragOrigin = null;
 
-  if (!wasDragging) handleTap(origin.r, origin.c);
+  if (wasDragging) endMove();
+  else handleTap(origin.r, origin.c);
 }
 
 function handleTap(r, c) {
-  if (state.board[r][c] === WRONG) return;
+  if (state.gameOver || state.board[r][c] === CAT || state.board[r][c] === WRONG) return;
   const key = `${r},${c}`;
   if (pendingTap && pendingTap.key === key) {
     clearTimeout(pendingTap.timer);
-    // Undo the mark applied on first tap, then place cat
+    // Undo the mark applied on first tap (without a separate undo entry —
+    // it was never committed), then place the cat as one clean move.
     if (pendingTap.prevState !== undefined) {
       state.board[r][c] = pendingTap.prevState;
       updateCellView(r, c);
@@ -563,19 +826,24 @@ function handleTap(r, c) {
     attemptPlaceCat(r, c);
     return;
   }
-  // Flush any pending tap on a different cell
-  if (pendingTap) {
-    clearTimeout(pendingTap.timer);
-    pendingTap = null;
-  }
-  // Apply mark/hypo immediately for instant feedback
+  // Flush any pending tap on a different cell as its own committed move.
+  if (pendingTap) commitPendingTap();
+  // Apply mark/hypo immediately for instant feedback; committed to the undo
+  // stack only once we know a follow-up double-tap didn't revert it.
   const prevState = state.board[r][c];
-  if (settings.hypo) toggleHypo(r, c); else toggleMark(r, c);
+  if (settings.hypo) applyHypoToggle(r, c); else applyMarkToggle(r, c);
   pendingTap = {
-    key,
-    prevState,
-    timer: setTimeout(() => { pendingTap = null; }, DOUBLE_TAP_MS),
+    key, r, c, prevState,
+    timer: setTimeout(() => commitPendingTap(), DOUBLE_TAP_MS),
   };
+}
+
+function commitPendingTap() {
+  if (!pendingTap) return;
+  clearTimeout(pendingTap.timer);
+  const { r, c, prevState } = pendingTap;
+  pendingTap = null;
+  pushUndoMove([{ r, c, prev: prevState, cur: state.board[r][c] }], state.hearts, state.hearts);
 }
 
 init();

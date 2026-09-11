@@ -26,25 +26,35 @@
 
     <section id="screen-game" class="screen hidden">
       <div class="game-toolbar">
-        <button id="btn-back">← 返回</button>
+        <button id="btn-back" class="icon-btn" aria-label="返回" title="返回">←</button>
         <span id="game-title"></span>
-        <span id="hearts" class="hearts"></span>
+        <span class="top-bar-right">
+          <button id="btn-settings" class="icon-btn" aria-label="設定" title="設定">⚙️</button>
+        </span>
+      </div>
+      <div class="game-toolbar">
+        <span></span>
+        <span class="top-bar-right">
+          <span id="timer" class="timer">0:00</span>
+          <span id="hearts" class="hearts"></span>
+        </span>
       </div>
       <div class="game-toolbar tool-row">
-        <button id="btn-restart">重來</button>
-        <button id="btn-toggle-sound" class="tool-toggle">音效 🔊</button>
-        <button id="btn-toggle-vibrate" class="tool-toggle">振動 📳</button>
-        <button id="btn-toggle-auto" class="tool-toggle">自動排除</button>
+        <button id="btn-restart" class="tool-toggle">重來 ⟲</button>
         <button id="btn-toggle-hypo" class="tool-toggle">假設 △</button>
-        <button id="btn-help" class="tool-toggle">說明</button>
       </div>
       <div id="board" class="board"></div>
+      <div class="game-toolbar tool-row">
+        <button id="btn-undo" class="tool-toggle" disabled>復原 ↶</button>
+        <button id="btn-redo" class="tool-toggle" disabled>重做 ↷</button>
+      </div>
       <div id="status-banner" class="status-banner hidden"></div>
 
       <div id="win-modal" class="modal-overlay hidden">
         <div class="modal-box">
           <div class="modal-emoji">🎉</div>
           <div class="modal-title">完成！</div>
+          <div id="win-time" class="modal-subtitle"></div>
           <div class="modal-buttons">
             <button id="btn-modal-back" class="secondary">選關</button>
             <button id="btn-replay" class="secondary">重玩</button>
@@ -72,6 +82,36 @@
           </div>
           <div class="modal-buttons">
             <button id="btn-help-close">關閉</button>
+          </div>
+        </div>
+      </div>
+      <div id="settings-modal" class="modal-overlay hidden">
+        <div class="modal-box settings-box">
+          <div class="modal-title" style="font-size:1.1rem;margin-bottom:16px">設定</div>
+          <div class="settings-section">
+            <div class="settings-row">
+              <span>音效</span>
+              <button id="btn-toggle-sound" class="tool-toggle">🔊</button>
+            </div>
+            <div class="settings-row">
+              <span>振動</span>
+              <button id="btn-toggle-vibrate" class="tool-toggle">📳</button>
+            </div>
+            <div class="settings-row">
+              <span>自動排除</span>
+              <button id="btn-toggle-auto" class="tool-toggle">開</button>
+            </div>
+          </div>
+          <div class="settings-section">
+            <div class="settings-row">
+              <span>調色盤</span>
+              <button id="btn-palette-reset" class="tool-toggle">恢復預設</button>
+            </div>
+            <div id="palette-editor" class="palette-editor"></div>
+          </div>
+          <div class="modal-buttons">
+            <button id="btn-help-open" class="secondary">遊戲說明</button>
+            <button id="btn-settings-close">關閉</button>
           </div>
         </div>
       </div>
