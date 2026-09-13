@@ -159,7 +159,7 @@ function saveSettings() {
   try { localStorage.setItem("meowdoku_settings", JSON.stringify(settings)); } catch { }
 }
 
-// Star tracking: { "n:idx": 1|2|3 }. Migrates old array format to object.
+// Star tracking: { "pack:idx": 1|2|3 }. Migrates old array format to object.
 function getStars() {
   try {
     const raw = JSON.parse(localStorage.getItem("meowdoku_done") || "{}");
@@ -167,15 +167,37 @@ function getStars() {
     return (typeof raw === "object" && raw !== null) ? raw : {};
   } catch { return {}; }
 }
-function saveStars(n, idx, stars) {
+function saveStars(pack, idx, stars) {
   const data = getStars();
-  const key = `${n}:${idx}`;
+  const key = `${pack}:${idx}`;
   if ((data[key] || 0) < stars) data[key] = stars;
   try { localStorage.setItem("meowdoku_done", JSON.stringify(data)); } catch { }
 }
 
+// Packs shown after the numeric board-size packs, in this order. Their levels
+// are mixed-size, so board size comes from each level file rather than the key.
+const EXTRA_PACKS = ["hard", "bad"];
+const PACK_LABELS = { hard: "困難", bad: "需猜測" };
+const PACK_HINTS = {
+  hard: "純邏輯可解，但需要較進階的推理",
+  bad: "無法只靠推理解開，必須猜測",
+};
+
+function packLabel(pack) {
+  return PACK_LABELS[pack] ?? `${pack} x ${pack}`;
+}
+
+function comparePacks(a, b) {
+  const ia = EXTRA_PACKS.indexOf(a), ib = EXTRA_PACKS.indexOf(b);
+  if (ia === -1 && ib === -1) return Number(a) - Number(b);
+  if (ia === -1) return -1;
+  if (ib === -1) return 1;
+  return ia - ib;
+}
+
 const state = {
-  sizes: {},        // { "8": levelCount, ... }
+  packs: {},        // { "8": levelCount, ..., "hard": 372, "bad": 365 }
+  pack: null,       // selected pack key; board size for numeric packs, else a name
   n: null,
   levelIdx: null,
   regions: null,     // n x n array of region ids (0..n-1)
@@ -432,16 +454,16 @@ async function init() {
   try { history.replaceState({ screen: "select" }, ""); } catch { }
 
   el.btnBack.addEventListener("click", () => history.back());
-  el.btnRestart.addEventListener("click", () => startLevel(state.n, state.levelIdx));
+  el.btnRestart.addEventListener("click", () => startLevel(state.pack, state.levelIdx));
   el.btnUndo?.addEventListener("click", doUndo);
   el.btnRedo?.addEventListener("click", doRedo);
   el.btnNextLevel?.addEventListener("click", () => {
     el.winModal.classList.add("hidden");
-    startLevel(state.n, state.levelIdx + 1);
+    startLevel(state.pack, state.levelIdx + 1);
   });
   el.btnReplay?.addEventListener("click", () => {
     el.winModal.classList.add("hidden");
-    startLevel(state.n, state.levelIdx);
+    startLevel(state.pack, state.levelIdx);
   });
   el.btnModalBack?.addEventListener("click", () => {
     el.winModal.classList.add("hidden");
@@ -502,56 +524,59 @@ async function init() {
   el.board.addEventListener("pointercancel", onPointerUp);
 
   const res = await fetch("levels_index.json");
-  state.sizes = await res.json();
-  renderSizeButtons();
+  state.packs = await res.json();
+  renderPackButtons();
 }
 
-function renderSizeButtons() {
+function renderPackButtons() {
   el.sizeButtons.innerHTML = "";
-  Object.keys(state.sizes).sort((a, b) => a - b).forEach((n) => {
+  Object.keys(state.packs).sort(comparePacks).forEach((pack) => {
     const btn = document.createElement("button");
-    btn.textContent = `${n} x ${n}`;
-    btn.addEventListener("click", () => selectSize(Number(n)));
+    btn.textContent = packLabel(pack);
+    btn.dataset.pack = pack;
+    if (PACK_HINTS[pack]) btn.title = PACK_HINTS[pack];
+    btn.addEventListener("click", () => selectPack(pack));
     el.sizeButtons.appendChild(btn);
   });
 }
 
-function selectSize(n) {
-  state.n = n;
+function selectPack(pack) {
+  state.pack = pack;
   [...el.sizeButtons.children].forEach((b) => {
-    b.classList.toggle("selected", b.textContent.startsWith(`${n} `));
+    b.classList.toggle("selected", b.dataset.pack === pack);
   });
 
-  const count = state.sizes[n];
+  const count = state.packs[pack];
   const stars = getStars();
   el.levelButtons.innerHTML = "";
   for (let i = 1; i <= count; i++) {
     const btn = document.createElement("button");
     btn.textContent = String(i);
-    const s = stars[`${n}:${i}`] || 0;
+    const s = stars[`${pack}:${i}`] || 0;
     if (s > 0) { btn.classList.add("done"); btn.dataset.stars = String(s); }
-    btn.addEventListener("click", () => startLevel(n, i));
+    btn.addEventListener("click", () => startLevel(pack, i));
     el.levelButtons.appendChild(btn);
   }
 }
 
 function refreshDoneMarks() {
-  if (!state.n) return;
+  if (!state.pack) return;
   const stars = getStars();
   [...el.levelButtons.children].forEach((btn, i) => {
-    const s = stars[`${state.n}:${i + 1}`] || 0;
+    const s = stars[`${state.pack}:${i + 1}`] || 0;
     btn.classList.toggle("done", s > 0);
     if (s > 0) btn.dataset.stars = String(s);
     else delete btn.dataset.stars;
   });
 }
 
-async function startLevel(n, idx) {
-  const path = `levels/${n}/level_${n}_${String(idx).padStart(8, "0")}.txt`;
+async function startLevel(pack, idx) {
+  const path = `levels/${pack}/level_${pack}_${String(idx).padStart(8, "0")}.txt`;
   const res = await fetch(path);
   const text = await res.text();
-  const { regions, solution } = parseLevel(text);
+  const { n, regions, solution } = parseLevel(text);
 
+  state.pack = pack;
   state.n = n;
   state.levelIdx = idx;
   state.regions = regions;
@@ -563,7 +588,9 @@ async function startLevel(n, idx) {
   resetUndoRedo();
   resetTimer();
 
-  el.gameTitle.textContent = `${n} x ${n} — 第 ${idx} 關`;
+  el.gameTitle.textContent = PACK_LABELS[pack]
+    ? `${PACK_LABELS[pack]} — 第 ${idx} 關 (${n} x ${n})`
+    : `${n} x ${n} — 第 ${idx} 關`;
   el.statusBanner.classList.add("hidden");
   showGameScreen();
   renderBoard();
@@ -643,9 +670,9 @@ function checkWin() {
     state.gameOver = true;
     stopTimer();
     updateUndoRedoButtons();
-    saveStars(state.n, state.levelIdx, state.hearts);
+    saveStars(state.pack, state.levelIdx, state.hearts);
     playWin(); vibrate(300);
-    const hasNext = state.levelIdx < state.sizes[state.n];
+    const hasNext = state.levelIdx < state.packs[state.pack];
     el.btnNextLevel.style.display = hasNext ? "" : "none";
     if (el.winTime) el.winTime.textContent = state.timerFrozenMs !== null ? `用時 ${formatElapsed(state.timerFrozenMs)}` : "";
     setTimeout(() => el.winModal.classList.remove("hidden"), 300);

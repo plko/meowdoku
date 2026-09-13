@@ -13,9 +13,11 @@ Difficulty tiers
        · all remaining cells of a color are in one row → that row dedicated to this color → elim others from row
        · all remaining cells of a color are in one col → same, for cols
   2  Intersection of exclusion sets:
-       · for each possible placement of a color, compute what would be eliminated;
-         intersect over all placements → those cells can always be eliminated
-  3  2-group (rows/cols/colors): two rows cover exactly two colors (or vice versa)
+       · for each possible placement of a color (or row, or col), compute what
+         would be eliminated; intersect over all placements → those cells can
+         always be eliminated
+  3  2-group over any two of the three partitions (rows / cols / colors):
+       two rows cover exactly two colors, two rows span exactly two cols, etc.
   4  3-group, 5 4-group, 6 5-group, 7 6-group  (symmetric; stop at n//2)
   9  Backtracking required (logic tiers 1-7 are all exhausted)
 """
@@ -200,7 +202,7 @@ def tier1(board: Board) -> Optional[str]:
         if len(cells) == 1:
             r2, c2 = cells[0]
             board.place_cat(r2, c2)
-            return f"貓貓在 ({r+1},{c2+1}) — row {r+1} 只剩一格"
+            return f"貓貓在 ({r2+1},{c2+1}) — row {r+1} 只剩一格"
 
     # 1c. Col with exactly one remaining cell → place cat
     for c in range(n):
@@ -210,7 +212,7 @@ def tier1(board: Board) -> Optional[str]:
         if len(cells) == 1:
             r2, c2 = cells[0]
             board.place_cat(r2, c2)
-            return f"貓貓在 ({r+1},{c2+1}) — col {c+1} 只剩一格"
+            return f"貓貓在 ({r2+1},{c2+1}) — col {c+1} 只剩一格"
 
     # 1d. All remaining cells in a row are one color → color confined to this row → elim elsewhere
     for r in range(n):
@@ -311,28 +313,59 @@ def tier1(board: Board) -> Optional[str]:
     return None
 
 
+def _tier2_intersection(
+    board: Board, cells: list[tuple[int, int]]
+) -> Optional[frozenset[tuple[int, int]]]:
+    """Intersection of excl_for() over every candidate cell in a group (a color's,
+    a row's, or a col's remaining cells). None if the group has <=1 cell or the
+    intersection is empty."""
+    if len(cells) <= 1:
+        return None
+    inter: Optional[frozenset] = None
+    for r, c in cells:
+        ex = excl_for(board, r, c)
+        inter = ex if inter is None else inter & ex
+        if not inter:
+            return None
+    return inter
+
+
+def _apply_elims(board: Board, cells) -> bool:
+    changed = False
+    for r, c in cells:
+        if board.elim(r, c):
+            changed = True
+    return changed
+
+
 def tier2(board: Board) -> Optional[str]:
-    """Intersection of exclusion sets — one color at a time, return on first progress."""
+    """Intersection of exclusion sets — one color/row/col at a time: no matter
+    which of its remaining cells the cat lands on, some cells are always
+    eliminated. Return on first group that yields new eliminations."""
     for color in range(board.num_colors):
         if color in board.solved_colors:
             continue
-        cells = board.avail(color=color)
-        if len(cells) <= 1:
+        inter = _tier2_intersection(board, board.avail(color=color))
+        if inter and _apply_elims(board, inter):
+            elim_str = ", ".join(f"({r+1},{c+1})" for (r, c) in sorted(inter))
+            return f"交集: 不管 {_clr(color)} 貓貓在哪裡，" f"總會排除 {elim_str}"
+
+    for r in range(board.n):
+        if r in board.solved_rows:
             continue
-        inter: Optional[frozenset] = None
-        for r, c in cells:
-            ex = excl_for(board, r, c)
-            inter = ex if inter is None else inter & ex
-            if not inter:
-                break
-        if inter:
-            changed = False
-            for r2, c2 in inter:
-                if board.elim(r2, c2):
-                    changed = True
-            if changed:
-                elim_str = ", ".join(f"({r+1},{c+1})" for (r, c) in sorted(inter))
-                return f"交集: 不管 {_clr(color)} 貓貓在哪裡，" f"總會排除 {elim_str}"
+        inter = _tier2_intersection(board, board.avail(row=r))
+        if inter and _apply_elims(board, inter):
+            elim_str = ", ".join(f"({rr+1},{cc+1})" for (rr, cc) in sorted(inter))
+            return f"交集: 不管第 {r+1} row 的貓貓在哪裡，" f"總會排除 {elim_str}"
+
+    for c in range(board.n):
+        if c in board.solved_cols:
+            continue
+        inter = _tier2_intersection(board, board.avail(col=c))
+        if inter and _apply_elims(board, inter):
+            elim_str = ", ".join(f"({rr+1},{cc+1})" for (rr, cc) in sorted(inter))
+            return f"交集: 不管第 {c+1} col 的貓貓在哪裡，" f"總會排除 {elim_str}"
+
     return None
 
 
@@ -343,6 +376,14 @@ def tierk(board: Board, k: int) -> Optional[str]:
       · k cols  covering exactly k colors → same
       · k colors spanning exactly k rows  → those rows dedicated → elim other colors from them
       · k colors spanning exactly k cols  → same
+      · k rows  spanning exactly k cols   → those cols used up → elim from other rows
+      · k cols  spanning exactly k rows   → same, transposed
+
+    rows/cols/colors are three interchangeable partitions (one cat per group,
+    every cell in exactly one group of each), so all three pairings are valid
+    by the same Hall/pigeonhole argument. The rows×cols pairing degenerates at
+    k=1 (a row's cells are always in distinct cols), which is why it only shows
+    up here and not in tier1.
     """
     n = board.n
     unsolved_rows = [r for r in range(n) if r not in board.solved_rows]
@@ -443,6 +484,52 @@ def tierk(board: Board, k: int) -> Optional[str]:
                     return (
                         f"{k}-group: {{{clrs_str}}} 只存在於 col {{{cols_str}}} "
                         f"→ 把這些 col 裡面其他顏色的方塊排除"
+                    )
+
+    # k rows → k cols
+    if len(unsolved_rows) >= k:
+        for rows in combinations(unsolved_rows, k):
+            cells = [cell for r in rows for cell in board.avail(row=r)]
+            if not cells:
+                continue
+            cols_span = {c for (r, c) in cells}
+            if len(cols_span) == k:
+                changed = False
+                for r2 in unsolved_rows:
+                    if r2 in rows:
+                        continue
+                    for c2 in cols_span:
+                        if board.elim(r2, c2):
+                            changed = True
+                if changed:
+                    rows_str = ",".join(str(r + 1) for r in rows)
+                    cols_str = ",".join(str(c + 1) for c in sorted(cols_span))
+                    return (
+                        f"{k}-group: rows {{{rows_str}}} 只落在 col {{{cols_str}}} "
+                        f"→ 排除其他 row 在這些 col 的方塊"
+                    )
+
+    # k cols → k rows
+    if len(unsolved_cols) >= k:
+        for cols in combinations(unsolved_cols, k):
+            cells = [cell for c in cols for cell in board.avail(col=c)]
+            if not cells:
+                continue
+            rows_span = {r for (r, c) in cells}
+            if len(rows_span) == k:
+                changed = False
+                for c2 in unsolved_cols:
+                    if c2 in cols:
+                        continue
+                    for r2 in rows_span:
+                        if board.elim(r2, c2):
+                            changed = True
+                if changed:
+                    cols_str = ",".join(str(c + 1) for c in cols)
+                    rows_str = ",".join(str(r + 1) for r in sorted(rows_span))
+                    return (
+                        f"{k}-group: cols {{{cols_str}}} 只落在 row {{{rows_str}}} "
+                        f"→ 排除其他 col 在這些 row 的方塊"
                     )
 
     return None

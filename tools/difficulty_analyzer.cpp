@@ -187,37 +187,57 @@ bool tier1(Board &b) {
     return false;
 }
 
+// Intersection of excl_for() over every candidate cell in a group (a color's,
+// a row's, or a col's remaining cells). Mirrors _tier2_intersection() +
+// _apply_elims() in difficulty_analyzer.py. Returns true if new eliminations
+// were made.
+bool tier2_group(Board &b, const int cells[][2], int cnt) {
+    int n = b.n;
+    if (cnt <= 1) return false;
+
+    bool inter[MAXN][MAXN];
+    excl_for(b, cells[0][0], cells[0][1], inter);
+    bool empty = true;
+    for (int r = 0; r < n && empty; ++r)
+        for (int c = 0; c < n; ++c) if (inter[r][c]) { empty = false; break; }
+
+    for (int i = 1; i < cnt && !empty; ++i) {
+        bool ex[MAXN][MAXN];
+        excl_for(b, cells[i][0], cells[i][1], ex);
+        empty = true;
+        for (int r = 0; r < n; ++r)
+            for (int c = 0; c < n; ++c) {
+                inter[r][c] = inter[r][c] && ex[r][c];
+                if (inter[r][c]) empty = false;
+            }
+    }
+    if (empty) return false;
+
+    bool changed = false;
+    for (int r = 0; r < n; ++r)
+        for (int c = 0; c < n; ++c)
+            if (inter[r][c] && b.elim(r, c)) changed = true;
+    return changed;
+}
+
 bool tier2(Board &b) {
     int n = b.n;
     int cells[MAXN * MAXN][2];
+
     for (int color = 0; color < b.num_colors; ++color) {
         if (b.solved_colors[color]) continue;
         int cnt = avail_cells(b, color, -1, -1, cells);
-        if (cnt <= 1) continue;
-
-        bool inter[MAXN][MAXN];
-        excl_for(b, cells[0][0], cells[0][1], inter);
-        bool empty = true;
-        for (int r = 0; r < n && empty; ++r)
-            for (int c = 0; c < n; ++c) if (inter[r][c]) { empty = false; break; }
-
-        for (int i = 1; i < cnt && !empty; ++i) {
-            bool ex[MAXN][MAXN];
-            excl_for(b, cells[i][0], cells[i][1], ex);
-            empty = true;
-            for (int r = 0; r < n; ++r)
-                for (int c = 0; c < n; ++c) {
-                    inter[r][c] = inter[r][c] && ex[r][c];
-                    if (inter[r][c]) empty = false;
-                }
-        }
-        if (empty) continue;
-
-        bool changed = false;
-        for (int r = 0; r < n; ++r)
-            for (int c = 0; c < n; ++c)
-                if (inter[r][c] && b.elim(r, c)) changed = true;
-        if (changed) return true;
+        if (tier2_group(b, cells, cnt)) return true;
+    }
+    for (int r = 0; r < n; ++r) {
+        if (b.solved_rows[r]) continue;
+        int cnt = avail_cells(b, -1, r, -1, cells);
+        if (tier2_group(b, cells, cnt)) return true;
+    }
+    for (int c = 0; c < n; ++c) {
+        if (b.solved_cols[c]) continue;
+        int cnt = avail_cells(b, -1, -1, c, cells);
+        if (tier2_group(b, cells, cnt)) return true;
     }
     return false;
 }
@@ -366,6 +386,66 @@ bool tierk(Board &b, int k) {
                 if (!col_seen[c2]) continue;
                 for (int r2 = 0; r2 < n; ++r2)
                     if (!in_group[b.regions[r2][c2]] && b.elim(r2, c2)) changed = true;
+            }
+            return changed;
+        });
+        if (found) return true;
+    }
+
+    // k rows -> k cols
+    if (nr >= k) {
+        bool found = for_each_combination(nr, k, [&](const int *idx) {
+            bool in_group[MAXN] = {};
+            int cellcnt = 0;
+            for (int i = 0; i < k; ++i) {
+                int r = unsolved_rows[idx[i]];
+                in_group[r] = true;
+                cellcnt += avail_cells(b, -1, r, -1, cells + cellcnt);
+            }
+            if (cellcnt == 0) return false;
+            bool col_seen[MAXN] = {};
+            int cols_count = 0;
+            for (int i = 0; i < cellcnt; ++i) {
+                int c = cells[i][1];
+                if (!col_seen[c]) { col_seen[c] = true; ++cols_count; }
+            }
+            if (cols_count != k) return false;
+            bool changed = false;
+            for (int ii = 0; ii < nr; ++ii) {
+                int r2 = unsolved_rows[ii];
+                if (in_group[r2]) continue;
+                for (int c2 = 0; c2 < n; ++c2)
+                    if (col_seen[c2] && b.elim(r2, c2)) changed = true;
+            }
+            return changed;
+        });
+        if (found) return true;
+    }
+
+    // k cols -> k rows
+    if (nc >= k) {
+        bool found = for_each_combination(nc, k, [&](const int *idx) {
+            bool in_group[MAXN] = {};
+            int cellcnt = 0;
+            for (int i = 0; i < k; ++i) {
+                int c = unsolved_cols[idx[i]];
+                in_group[c] = true;
+                cellcnt += avail_cells(b, -1, -1, c, cells + cellcnt);
+            }
+            if (cellcnt == 0) return false;
+            bool row_seen[MAXN] = {};
+            int rows_count = 0;
+            for (int i = 0; i < cellcnt; ++i) {
+                int r = cells[i][0];
+                if (!row_seen[r]) { row_seen[r] = true; ++rows_count; }
+            }
+            if (rows_count != k) return false;
+            bool changed = false;
+            for (int ii = 0; ii < nc; ++ii) {
+                int c2 = unsolved_cols[ii];
+                if (in_group[c2]) continue;
+                for (int r2 = 0; r2 < n; ++r2)
+                    if (row_seen[r2] && b.elim(r2, c2)) changed = true;
             }
             return changed;
         });
