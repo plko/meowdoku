@@ -426,6 +426,14 @@ function resetUndoRedo() {
 // Per-cell DOM elements, indexed [row][col], created once per level load.
 let cellEls = [];
 
+// 假設 is a scratch mode rather than a preference: the button, the Space
+// shortcut and startLevel() all go through here.
+function toggleHypo() {
+  settings.hypo = !settings.hypo;
+  saveSettings();
+  updateToggleUI();
+}
+
 function updateToggleUI() {
   el.btnToggleSound.textContent = settings.sound ? "🔊" : "🔇";
   el.btnToggleVibrate.textContent = settings.vibrate ? "📳" : "📴";
@@ -541,23 +549,24 @@ async function init() {
     refreshBoardColors();
   });
   el.btnCopyAscii?.addEventListener("click", () => copyBoardAscii());
-  el.btnToggleHypo?.addEventListener("click", () => {
-    settings.hypo = !settings.hypo;
-    saveSettings();
-    updateToggleUI();
-  });
+  el.btnToggleHypo?.addEventListener("click", toggleHypo);
 
-  // "c" copies the board as BBS-ready ANSI art. Modifier combos are left alone
-  // so Ctrl/Cmd+C still does a normal copy.
+  // Board shortcuts: "c" copies the board as BBS-ready ANSI art, Space toggles
+  // 假設 mode. Modifier combos are left alone so Ctrl/Cmd+C still copies.
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "c" && e.key !== "C") return;
+    const key = e.key.toLowerCase();
+    if (key !== "c" && key !== " ") return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (el.screenGame.classList.contains("hidden")) return;
+    // An open dialog owns the keyboard: Space would otherwise toggle 假設 behind
+    // the overlay *and* swallow the activation of whichever button has focus.
+    if (document.querySelector(".modal-overlay:not(.hidden)")) return;
     const t = e.target;
     if (t instanceof HTMLElement
       && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
-    e.preventDefault();
-    copyBoardAscii();
+    e.preventDefault();  // also stops Space scrolling / re-clicking a focused button
+    if (key === "c") copyBoardAscii();
+    else toggleHypo();
   });
 
   el.board.addEventListener("pointerdown", onPointerDown);
@@ -629,6 +638,10 @@ async function startLevel(pack, idx) {
 
   resetUndoRedo();
   resetTimer();
+  // Never carry 假設 mode over from the previous level.
+  settings.hypo = false;
+  saveSettings();
+  updateToggleUI();
 
   el.gameTitle.textContent = PACK_LABELS[pack]
     ? `${PACK_LABELS[pack]} — 第 ${idx} 關 (${n} x ${n})`
