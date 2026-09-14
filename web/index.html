@@ -47,6 +47,7 @@
       <div class="game-toolbar tool-row">
         <button id="btn-undo" class="tool-toggle" disabled>復原 ↶</button>
         <button id="btn-redo" class="tool-toggle" disabled>重做 ↷</button>
+        <button id="btn-copy-ascii" class="tool-toggle hidden">ascii</button>
       </div>
       <div id="status-banner" class="status-banner hidden"></div>
 
@@ -78,6 +79,7 @@
               <li><b>點一下</b>：打叉標記 / 取消</li>
               <li><b>快速點兩下</b>：猜這格有貓（答錯扣一顆心）</li>
               <li><b>按住拖曳</b>：整排塗成同狀態</li>
+              <li><b>按 c</b>：複製 ASCII 盤面（可貼到 BBS）</li>
             </ul>
           </div>
           <div class="modal-buttons">
@@ -101,6 +103,10 @@
               <span>自動排除</span>
               <button id="btn-toggle-auto" class="tool-toggle">開</button>
             </div>
+            <div class="settings-row">
+              <span>複製 ascii 盤面</span>
+              <button id="btn-toggle-copy-ascii" class="tool-toggle">關</button>
+            </div>
           </div>
           <div class="settings-section">
             <div class="settings-row">
@@ -117,6 +123,8 @@
       </div>
     </section>
   </main>
+
+  <div id="toast" class="toast hidden"></div>
 
   <script src="game.js"></script>
 </body>

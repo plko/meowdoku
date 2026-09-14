@@ -151,8 +151,8 @@ loadPalette();
 const settings = (() => {
   try {
     const s = JSON.parse(localStorage.getItem("meowdoku_settings") || "{}");
-    return { sound: s.sound !== false, vibrate: s.vibrate !== false, autoElim: !!s.autoElim, hypo: !!s.hypo, showHelp: s.showHelp !== false };
-  } catch { return { sound: true, vibrate: true, autoElim: false, hypo: false, showHelp: true }; }
+    return { sound: s.sound !== false, vibrate: s.vibrate !== false, autoElim: !!s.autoElim, hypo: !!s.hypo, showHelp: s.showHelp !== false, copyAscii: !!s.copyAscii };
+  } catch { return { sound: true, vibrate: true, autoElim: false, hypo: false, showHelp: true, copyAscii: false }; }
 })();
 
 function saveSettings() {
@@ -230,6 +230,7 @@ const el = {
   btnReplay: document.getElementById("btn-replay"),
   btnModalBack: document.getElementById("btn-modal-back"),
   helpModal: document.getElementById("help-modal"),
+  toast: document.getElementById("toast"),
   btnHelpClose: document.getElementById("btn-help-close"),
   btnToggleHypo: document.getElementById("btn-toggle-hypo"),
   btnSettings: document.getElementById("btn-settings"),
@@ -239,6 +240,8 @@ const el = {
   btnToggleSound: document.getElementById("btn-toggle-sound"),
   btnToggleVibrate: document.getElementById("btn-toggle-vibrate"),
   btnToggleAuto: document.getElementById("btn-toggle-auto"),
+  btnToggleCopyAscii: document.getElementById("btn-toggle-copy-ascii"),
+  btnCopyAscii: document.getElementById("btn-copy-ascii"),
   paletteEditor: document.getElementById("palette-editor"),
   btnPaletteReset: document.getElementById("btn-palette-reset"),
 };
@@ -342,10 +345,13 @@ function stopTimer() {
 }
 
 // ── Undo / redo ──────────────────────────────────────────────────────────────
-// Each move is a list of {r, c, prev, cur} cell diffs plus the hearts count
-// before/after. A "move" spans one user gesture (a tap, a drag, or a resolved
+// Each move is a list of {r, c, prev, cur} cell diffs plus `cost`, the hearts
+// that move spent. A "move" spans one user gesture (a tap, a drag, or a resolved
 // double-tap cat placement) so one Undo click reverts exactly what the player
 // perceives as one action.
+//
+// Hearts are deliberately outside the undo/redo model: Undo never refunds one,
+// and Redo charges it again. A wrong guess is paid for once and stays paid.
 
 let undoStack = [];
 let redoStack = [];
@@ -367,19 +373,18 @@ function endMove() {
   const diffs = [...currentMove.diffMap.values()]
     .map((d) => ({ ...d, cur: state.board[d.r][d.c] }))
     .filter((d) => d.prev !== d.cur);
-  const heartsBefore = currentMove.heartsBefore;
-  const heartsAfter = state.hearts;
+  const cost = currentMove.heartsBefore - state.hearts;
   currentMove = null;
-  if (diffs.length > 0 || heartsBefore !== heartsAfter) {
-    undoStack.push({ diffs, heartsBefore, heartsAfter });
+  if (diffs.length > 0 || cost !== 0) {
+    undoStack.push({ diffs, cost });
     redoStack = [];
     updateUndoRedoButtons();
   }
 }
-function pushUndoMove(diffs, heartsBefore, heartsAfter) {
+function pushUndoMove(diffs, cost = 0) {
   const real = diffs.filter((d) => d.prev !== d.cur);
-  if (real.length === 0 && heartsBefore === heartsAfter) return;
-  undoStack.push({ diffs: real, heartsBefore, heartsAfter });
+  if (real.length === 0 && cost === 0) return;
+  undoStack.push({ diffs: real, cost });
   redoStack = [];
   updateUndoRedoButtons();
 }
@@ -392,8 +397,6 @@ function doUndo() {
   if (state.gameOver || undoStack.length === 0) return;
   const move = undoStack.pop();
   for (const d of move.diffs) { state.board[d.r][d.c] = d.prev; updateCellView(d.r, d.c); }
-  state.hearts = move.heartsBefore;
-  renderHearts();
   redoStack.push(move);
   updateUndoRedoButtons();
 }
@@ -401,8 +404,11 @@ function doRedo() {
   if (state.gameOver || redoStack.length === 0) return;
   const move = redoStack.pop();
   for (const d of move.diffs) { state.board[d.r][d.c] = d.cur; updateCellView(d.r, d.c); }
-  state.hearts = move.heartsAfter;
-  renderHearts();
+  if (move.cost > 0) {
+    state.hearts -= move.cost;
+    renderHearts();
+    playWrong(); vibrate(200);
+  }
   undoStack.push(move);
   updateUndoRedoButtons();
   if (state.hearts <= 0) triggerGameOver();
@@ -427,6 +433,12 @@ function updateToggleUI() {
   el.btnToggleVibrate.classList.toggle("off", !settings.vibrate);
   el.btnToggleAuto.classList.toggle("off", !settings.autoElim);
   el.btnToggleHypo?.classList.toggle("off", !settings.hypo);
+  if (el.btnToggleCopyAscii) {
+    el.btnToggleCopyAscii.textContent = settings.copyAscii ? "開" : "關";
+    el.btnToggleCopyAscii.classList.toggle("off", !settings.copyAscii);
+  }
+  // The button is opt-in; the "c" shortcut works either way.
+  el.btnCopyAscii?.classList.toggle("hidden", !settings.copyAscii);
 }
 
 function renderPaletteEditor() {
@@ -512,10 +524,29 @@ async function init() {
     saveSettings();
     updateToggleUI();
   });
+  el.btnToggleCopyAscii?.addEventListener("click", () => {
+    settings.copyAscii = !settings.copyAscii;
+    saveSettings();
+    updateToggleUI();
+  });
+  el.btnCopyAscii?.addEventListener("click", () => copyBoardAscii());
   el.btnToggleHypo?.addEventListener("click", () => {
     settings.hypo = !settings.hypo;
     saveSettings();
     updateToggleUI();
+  });
+
+  // "c" copies the board as BBS-ready ANSI art. Modifier combos are left alone
+  // so Ctrl/Cmd+C still does a normal copy.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "c" && e.key !== "C") return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (el.screenGame.classList.contains("hidden")) return;
+    const t = e.target;
+    if (t instanceof HTMLElement
+      && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    e.preventDefault();
+    copyBoardAscii();
   });
 
   el.board.addEventListener("pointerdown", onPointerDown);
@@ -660,6 +691,82 @@ function updateCellView(r, c) {
 
 function renderHearts() {
   el.hearts.textContent = "❤️".repeat(state.hearts) + "🤍".repeat(HEARTS_MAX - state.hearts);
+}
+
+// ── Copy board as ANSI art (for pasting into a telnet BBS) ───────────────────
+// The palette is two rings of six hues (紅 橘 黃 青 藍 紫), a light and a dark
+// version of each — which lands exactly on ANSI 31..36 plus the bright
+// attribute, so all twelve regions get a distinct colour. 橘 has no ANSI hue of
+// its own and takes the otherwise-unused 32 (green).
+//
+// The code comes from the region id's ring slot, not from REGION_COLORS: a
+// custom palette would collapse several regions onto the same nearest ANSI
+// colour, and staying distinguishable matters more here than matching on-screen
+// hues exactly.
+// All four glyphs are East Asian Ambiguous width, i.e. two columns each in a
+// CJK BBS terminal, so the board stays square. Don't swap in a narrow one.
+const ANSI_HUES = [31, 32, 33, 36, 34, 35];  // 紅 橘 黃 青 藍 紫
+const ASCII_CELL = {
+  [EMPTY]: "▇",
+  [MARK]: "╳",
+  [WRONG]: "╳",
+  [CAT]: "★",
+  [HYPO]: "△",
+};
+
+function ansiForRegion(id) {
+  const slot = (id * 7) % 12;  // the permutation REGION_COLORS is baked in
+  return `${slot < 6 ? "1;" : ""}${ANSI_HUES[slot % 6]}`;
+}
+
+function boardToAnsi() {
+  const n = state.n;
+  const lines = [];
+  for (let r = 0; r < n; r++) {
+    let line = "";
+    for (let c = 0; c < n; c++) {
+      const glyph = ASCII_CELL[state.board[r][c]] ?? ASCII_CELL[EMPTY];
+      line += `\x1b[${ansiForRegion(state.regions[r][c])}m${glyph}`;
+    }
+    lines.push(line + "\x1b[m");
+  }
+  return lines.join("\n");
+}
+
+// navigator.clipboard needs a secure context, which plain http on a LAN address
+// is not — hence the execCommand path for playing off another device.
+function legacyCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+async function copyBoardAscii() {
+  if (!state.board || !state.n) return;
+  const text = boardToAnsi();
+  let ok = true;
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+    else ok = legacyCopy(text);
+  } catch { ok = legacyCopy(text); }
+  showToast(ok ? "已複製 ASCII 盤面" : "複製失敗");
+}
+
+let toastTimer = null;
+function showToast(msg) {
+  if (!el.toast) return;
+  el.toast.textContent = msg;
+  el.toast.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.toast.classList.add("hidden"), 1600);
 }
 
 function checkWin() {
@@ -870,7 +977,7 @@ function commitPendingTap() {
   clearTimeout(pendingTap.timer);
   const { r, c, prevState } = pendingTap;
   pendingTap = null;
-  pushUndoMove([{ r, c, prev: prevState, cur: state.board[r][c] }], state.hearts, state.hearts);
+  pushUndoMove([{ r, c, prev: prevState, cur: state.board[r][c] }]);
 }
 
 init();
