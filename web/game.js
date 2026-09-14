@@ -151,8 +151,8 @@ loadPalette();
 const settings = (() => {
   try {
     const s = JSON.parse(localStorage.getItem("meowdoku_settings") || "{}");
-    return { sound: s.sound !== false, vibrate: s.vibrate !== false, autoElim: !!s.autoElim, hypo: !!s.hypo, showHelp: s.showHelp !== false, copyAscii: !!s.copyAscii };
-  } catch { return { sound: true, vibrate: true, autoElim: false, hypo: false, showHelp: true, copyAscii: false }; }
+    return { sound: s.sound !== false, vibrate: s.vibrate !== false, autoElim: !!s.autoElim, hypo: !!s.hypo, showHelp: s.showHelp !== false, copyAscii: !!s.copyAscii, dimMarked: s.dimMarked !== false };
+  } catch { return { sound: true, vibrate: true, autoElim: false, hypo: false, showHelp: true, copyAscii: false, dimMarked: true }; }
 })();
 
 function saveSettings() {
@@ -241,6 +241,7 @@ const el = {
   btnToggleVibrate: document.getElementById("btn-toggle-vibrate"),
   btnToggleAuto: document.getElementById("btn-toggle-auto"),
   btnToggleCopyAscii: document.getElementById("btn-toggle-copy-ascii"),
+  btnToggleDim: document.getElementById("btn-toggle-dim"),
   btnCopyAscii: document.getElementById("btn-copy-ascii"),
   paletteEditor: document.getElementById("palette-editor"),
   btnPaletteReset: document.getElementById("btn-palette-reset"),
@@ -437,6 +438,10 @@ function updateToggleUI() {
     el.btnToggleCopyAscii.textContent = settings.copyAscii ? "開" : "關";
     el.btnToggleCopyAscii.classList.toggle("off", !settings.copyAscii);
   }
+  if (el.btnToggleDim) {
+    el.btnToggleDim.textContent = settings.dimMarked ? "開" : "關";
+    el.btnToggleDim.classList.toggle("off", !settings.dimMarked);
+  }
   // The button is opt-in; the "c" shortcut works either way.
   el.btnCopyAscii?.classList.toggle("hidden", !settings.copyAscii);
 }
@@ -528,6 +533,12 @@ async function init() {
     settings.copyAscii = !settings.copyAscii;
     saveSettings();
     updateToggleUI();
+  });
+  el.btnToggleDim?.addEventListener("click", () => {
+    settings.dimMarked = !settings.dimMarked;
+    saveSettings();
+    updateToggleUI();
+    refreshBoardColors();
   });
   el.btnCopyAscii?.addEventListener("click", () => copyBoardAscii());
   el.btnToggleHypo?.addEventListener("click", () => {
@@ -685,7 +696,7 @@ function updateCellView(r, c) {
   const st = state.board[r][c];
   const cell = cellEls[r][c];
   cell.dataset.state = String(st);
-  const palette = st === MARK ? REGION_COLORS_DIM : REGION_COLORS;
+  const palette = (st === MARK && settings.dimMarked) ? REGION_COLORS_DIM : REGION_COLORS;
   cell.style.background = palette[state.regions[r][c] % palette.length];
 }
 
