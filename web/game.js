@@ -740,7 +740,7 @@ const ASCII_CELL = {
 
 function ansiForRegion(id) {
   const slot = (id * 7) % 12;  // the permutation REGION_COLORS is baked in
-  return `${slot < 6 ? "1;" : ""}${ANSI_HUES[slot % 6]}`;
+  return `${id < 6 ? "1;" : "0;"}${ANSI_HUES[slot % 6]}`;
 }
 
 function boardToAnsi() {
