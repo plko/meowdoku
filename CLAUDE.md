@@ -35,6 +35,13 @@ python3 tools/build_index.py
 python3 tools/solver.py levels/8/level_8_001.txt
 ```
 
+## Printing levels
+
+```sh
+# pack 6, levels 1-10 and 51-60, four boards per A4 page -> meowdoku_6.pdf
+python3 tools/gen-pdf.py --set 6 --level 1..10,51..60 --per-page 4
+```
+
 ## Architecture
 
 ### Puzzle rules
@@ -85,6 +92,15 @@ Pointer Events API (`pointerdown/move/up/cancel` on `#board`). The board calls `
 3. `difficulty_analyzer.py` / `difficulty_analyzer.{h,cpp}` — same tier1/tier2/tierk human-reasoning simulation (see the module docstring for tier definitions); the C++ port drops the step-by-step descriptions and is called in-process by `generate.cpp` (no subprocess launch) to reject boards that need backtracking (D9). Keep both in sync if the reasoning rules change; use the Python version for human-readable reports (`--step-by-step`, `--prune`).
 4. Levels that fail the D9 check aren't discarded — they're written to `levels/backtrack/level_<n>_<idx>.txt` (flat, mixed sizes) instead of the per-size dirs. This is a staging area: triage new arrivals into the `hard` / `bad` packs (renumbering them `level_<pack>_<idx>.txt`) rather than shipping from it. `build_index.py` skips this directory.
 5. `build_index.py` — scans `levels/` (excluding `levels/backtrack`) and writes `web/levels_index.json`. It matches `level_<dirname>_<idx>.txt`, so a pack directory's files must be named after the directory.
+
+### Printing (`tools/gen-pdf.py`)
+
+Exports boards as a print-ready A4 PDF: colour blocks only, white background, no cats / marks / frames. No third-party dependencies — `PdfDocument` writes the file by hand (filled rounded rectangles, one Flate-compressed content stream per page), which is all a board needs.
+
+- `--set` is a pack key, `--level` takes `1..10,51..60` / `5-9` / `7` / `all`, `--per-page` is 1, 2, 4 or 6. `GRIDS` maps boards-per-page to (rows, cols); the block of boards is centred on the page so every gap is one `GUTTER`.
+- Region colours are parsed out of `DEFAULT_REGION_COLORS` in `web/game.js` at run time, so the printed palette cannot drift from the screen one.
+- `--label` writes each board's level number under its own bottom-left corner (not one number per page), so the number survives a page being cut into separate puzzles. `slots()` reserves `BoardRenderer.LABEL_SPACE` under every board for it: labels shrink the boards slightly instead of pushing text into the page margin. This is the only text the tool ever draws, and the Helvetica font object is emitted only if something drew some.
+- `BoardRenderer` is the seam for new print styles. A black-and-white variant is a known future request and needs a different visualization entirely (hatching, outlines or letters — colour is the only thing separating two regions here): subclass `BoardRenderer`, register it in `RENDERERS`, and level lookup, layout, paging and the CLI are unaffected.
 
 ### Tuning colors and icon sizes
 

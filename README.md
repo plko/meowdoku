@@ -80,3 +80,21 @@ Notes:
 ```sh
 python3 solver.py ../levels/8/level_8_001.txt
 ```
+
+## Printing levels
+
+Export boards to a print-ready A4 PDF — colour blocks only, white
+background, nothing else on the page:
+
+```sh
+# pack 6, levels 1-10 and 51-60, four boards per page -> meowdoku_6.pdf
+python3 tools/gen-pdf.py --set 6 --level 1..10,51..60 --per-page 4
+```
+
+- `--set` — a pack: a board size (`6`..`12`) or `hard` / `bad`.
+- `--level` — `1..10,51..60`, `5-9`, a single `7`, or `all`.
+- `--per-page` — 1, 2, 4 (2x2) or 6 (3x2). Default 4.
+- `--label` — print each board's level number in its bottom-left corner.
+- `--out` — output path. Defaults to `meowdoku_<set>.pdf`.
+
+Needs no third-party packages; the PDF is written directly.
