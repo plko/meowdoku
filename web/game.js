@@ -171,7 +171,65 @@ function saveStars(pack, idx, stars) {
   const data = getStars();
   const key = `${pack}:${idx}`;
   if ((data[key] || 0) < stars) data[key] = stars;
+  saveStarsMap(data);
+}
+
+function saveStarsMap(data) {
   try { localStorage.setItem("meowdoku_done", JSON.stringify(data)); } catch { }
+}
+
+// ── Progress export / import ────────────────────────────────────────────────
+// Export drops the whole star map on the clipboard as JSON; import *merges*
+// whatever is pasted back in, keeping the higher star count on every level both
+// sides have cleared. Two devices can therefore be synced in either direction
+// without a clear ever being lost.
+const PROGRESS_FORMAT = 1;
+
+async function exportProgress() {
+  const stars = getStars();
+  const ok = await copyToClipboard(JSON.stringify({ v: PROGRESS_FORMAT, stars }));
+  showToast(ok ? `已複製 ${Object.keys(stars).length} 關的進度` : "複製失敗");
+}
+
+// Returns a cleaned star map, or null if the text is not progress data at all.
+// Keys for packs this build does not ship are kept rather than dropped: an older
+// client holding a newer one's levels must not erase them on a round trip.
+function parseProgress(text) {
+  let raw;
+  try { raw = JSON.parse(text); } catch { return null; }
+  if (Array.isArray(raw)) raw = Object.fromEntries(raw.map((k) => [k, 1]));      // pre-stars format
+  else if (raw && typeof raw.stars === "object" && raw.stars) raw = raw.stars;  // wrapped export
+  if (!raw || typeof raw !== "object") return null;
+  const out = {};
+  for (const [key, stars] of Object.entries(raw)) {
+    if (!/^[a-z0-9]+:[1-9][0-9]*$/i.test(key)) continue;
+    if (!Number.isInteger(stars) || stars < 1 || stars > HEARTS_MAX) continue;
+    out[key] = stars;
+  }
+  return out;
+}
+
+// Returns false only when the paste could not be read as progress at all, so the
+// caller can leave the text in the box for the user to fix.
+function importProgress(text) {
+  const incoming = parseProgress(text);
+  if (!incoming) { showToast("匯入失敗：格式不對"); return false; }
+  const data = getStars();
+  let added = 0, improved = 0;
+  for (const [key, stars] of Object.entries(incoming)) {
+    const have = data[key] || 0;
+    if (stars <= have) continue;
+    if (have === 0) added++; else improved++;
+    data[key] = stars;
+  }
+  if (added || improved) {
+    saveStarsMap(data);
+    refreshDoneMarks();
+    showToast(`已合併：新增 ${added} 關、${improved} 關星數提升`);
+  } else {
+    showToast("沒有新進度可以合併");
+  }
+  return true;
 }
 
 // Packs shown after the numeric board-size packs, in this order. Their levels
@@ -246,6 +304,12 @@ const el = {
   btnCopyLink: document.getElementById("btn-copy-link"),
   paletteEditor: document.getElementById("palette-editor"),
   btnPaletteReset: document.getElementById("btn-palette-reset"),
+  btnExportProgress: document.getElementById("btn-export-progress"),
+  btnImportProgress: document.getElementById("btn-import-progress"),
+  importPanel: document.getElementById("import-panel"),
+  importText: document.getElementById("import-text"),
+  btnImportCancel: document.getElementById("btn-import-cancel"),
+  btnImportConfirm: document.getElementById("btn-import-confirm"),
 };
 
 // ── Audio ────────────────────────────────────────────────────────────────────
@@ -451,8 +515,8 @@ function updateToggleUI() {
     el.btnToggleDim.textContent = settings.dimMarked ? "開" : "關";
     el.btnToggleDim.classList.toggle("off", !settings.dimMarked);
   }
-  // Both buttons are opt-in via the same setting; the "c" shortcut for ascii
-  // works either way.
+  // Both buttons are opt-in via the same setting; the "c" shortcut for the
+  // link works either way.
   el.btnCopyAscii?.classList.toggle("hidden", !settings.copyAscii);
   el.btnCopyLink?.classList.toggle("hidden", !settings.copyAscii);
 }
@@ -471,6 +535,18 @@ function renderPaletteEditor() {
     label.appendChild(input);
     el.paletteEditor.appendChild(label);
   });
+}
+
+// The import box is scratch space, not a setting: leaving the dialog always
+// discards whatever is sitting in it.
+function hideImportPanel() {
+  el.importPanel?.classList.add("hidden");
+  if (el.importText) el.importText.value = "";
+}
+
+function closeSettings() {
+  el.settingsModal.classList.add("hidden");
+  hideImportPanel();
 }
 
 async function init() {
@@ -508,15 +584,28 @@ async function init() {
   });
 
   el.btnSettings?.addEventListener("click", () => el.settingsModal.classList.remove("hidden"));
-  el.btnSettingsClose?.addEventListener("click", () => el.settingsModal.classList.add("hidden"));
+  el.btnSettingsClose?.addEventListener("click", closeSettings);
   el.settingsModal?.addEventListener("click", (e) => {
-    if (e.target === el.settingsModal) el.settingsModal.classList.add("hidden");
+    if (e.target === el.settingsModal) closeSettings();
   });
   el.btnHelpOpen?.addEventListener("click", () => {
-    el.settingsModal.classList.add("hidden");
+    closeSettings();
     el.helpModal.classList.remove("hidden");
   });
   el.btnPaletteReset?.addEventListener("click", resetPalette);
+
+  el.btnExportProgress?.addEventListener("click", exportProgress);
+  el.btnImportProgress?.addEventListener("click", () => {
+    const shown = !el.importPanel.classList.toggle("hidden");
+    if (shown) el.importText.focus();
+    else el.importText.value = "";
+  });
+  el.btnImportCancel?.addEventListener("click", hideImportPanel);
+  el.btnImportConfirm?.addEventListener("click", () => {
+    const text = el.importText.value.trim();
+    if (!text) { showToast("請先貼上匯出的進度"); return; }
+    if (importProgress(text)) hideImportPanel();
+  });
 
   window.addEventListener("popstate", () => {
     if (!el.screenGame.classList.contains("hidden")) {
@@ -555,8 +644,8 @@ async function init() {
   el.btnCopyLink?.addEventListener("click", () => copyRelayLink());
   el.btnToggleHypo?.addEventListener("click", toggleHypo);
 
-  // Board shortcuts: "c" copies the board as BBS-ready ANSI art, Space toggles
-  // 假設 mode. Modifier combos are left alone so Ctrl/Cmd+C still copies.
+  // Board shortcuts: "c" copies the relay link to the current board, Space
+  // toggles 假設 mode. Modifier combos are left alone so Ctrl/Cmd+C still copies.
   document.addEventListener("keydown", (e) => {
     const key = e.key.toLowerCase();
     if (key !== "c" && key !== " ") return;
@@ -569,7 +658,7 @@ async function init() {
     if (t instanceof HTMLElement
       && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
     e.preventDefault();  // also stops Space scrolling / re-clicking a focused button
-    if (key === "c") copyBoardAscii();
+    if (key === "c") copyRelayLink();
     else toggleHypo();
   });
 
@@ -778,14 +867,16 @@ function legacyCopy(text) {
   return ok;
 }
 
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
+  } catch { }
+  return legacyCopy(text);
+}
+
 async function copyBoardAscii() {
   if (!state.board || !state.n) return;
-  const text = boardToAnsi();
-  let ok = true;
-  try {
-    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
-    else ok = legacyCopy(text);
-  } catch { ok = legacyCopy(text); }
+  const ok = await copyToClipboard(boardToAnsi());
   showToast(ok ? "已複製 ASCII 盤面" : "複製失敗");
 }
 
@@ -884,11 +975,7 @@ function buildRelayUrl() {
 async function copyRelayLink() {
   const url = buildRelayUrl();
   if (!url) return;
-  let ok = true;
-  try {
-    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(url);
-    else ok = legacyCopy(url);
-  } catch { ok = legacyCopy(url); }
+  const ok = await copyToClipboard(url);
   showToast(ok ? "已複製連結" : "複製失敗");
 }
 

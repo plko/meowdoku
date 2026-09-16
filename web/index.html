@@ -81,7 +81,7 @@
               <li><b>快速點兩下</b>：猜這格有貓（答錯扣一顆心）</li>
               <li><b>按住拖曳</b>：整排塗成同狀態</li>
               <li><b>按空白鍵</b>：切換假設模式</li>
-              <li><b>按 c</b>：複製 ASCII 盤面（可貼到 BBS）</li>
+              <li><b>按 c</b>：複製盤面連結（可分享目前進度）</li>
             </ul>
           </div>
           <div class="modal-buttons">
@@ -120,6 +120,23 @@
               <button id="btn-palette-reset" class="tool-toggle">恢復預設</button>
             </div>
             <div id="palette-editor" class="palette-editor"></div>
+          </div>
+          <div class="settings-section">
+            <div class="settings-row">
+              <span>關卡進度</span>
+              <span class="progress-buttons">
+                <button id="btn-export-progress" class="tool-toggle">匯出</button>
+                <button id="btn-import-progress" class="tool-toggle">匯入</button>
+              </span>
+            </div>
+            <div id="import-panel" class="import-panel hidden">
+              <textarea id="import-text" class="import-text" rows="3" spellcheck="false"
+                placeholder="貼上匯出的進度，會與現有進度合併（同一關取星數高的）"></textarea>
+              <div class="import-actions">
+                <button id="btn-import-cancel" class="tool-toggle">取消</button>
+                <button id="btn-import-confirm" class="tool-toggle">合併</button>
+              </div>
+            </div>
           </div>
           <div class="modal-buttons">
             <button id="btn-help-open" class="secondary">遊戲說明</button>
