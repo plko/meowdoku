@@ -243,6 +243,7 @@ const el = {
   btnToggleCopyAscii: document.getElementById("btn-toggle-copy-ascii"),
   btnToggleDim: document.getElementById("btn-toggle-dim"),
   btnCopyAscii: document.getElementById("btn-copy-ascii"),
+  btnCopyLink: document.getElementById("btn-copy-link"),
   paletteEditor: document.getElementById("palette-editor"),
   btnPaletteReset: document.getElementById("btn-palette-reset"),
 };
@@ -450,8 +451,10 @@ function updateToggleUI() {
     el.btnToggleDim.textContent = settings.dimMarked ? "開" : "關";
     el.btnToggleDim.classList.toggle("off", !settings.dimMarked);
   }
-  // The button is opt-in; the "c" shortcut works either way.
+  // Both buttons are opt-in via the same setting; the "c" shortcut for ascii
+  // works either way.
   el.btnCopyAscii?.classList.toggle("hidden", !settings.copyAscii);
+  el.btnCopyLink?.classList.toggle("hidden", !settings.copyAscii);
 }
 
 function renderPaletteEditor() {
@@ -549,6 +552,7 @@ async function init() {
     refreshBoardColors();
   });
   el.btnCopyAscii?.addEventListener("click", () => copyBoardAscii());
+  el.btnCopyLink?.addEventListener("click", () => copyRelayLink());
   el.btnToggleHypo?.addEventListener("click", toggleHypo);
 
   // Board shortcuts: "c" copies the board as BBS-ready ANSI art, Space toggles
@@ -577,6 +581,7 @@ async function init() {
   const res = await fetch("levels_index.json");
   state.packs = await res.json();
   renderPackButtons();
+  await applyRelayFromUrl();
 }
 
 function renderPackButtons() {
@@ -782,6 +787,134 @@ async function copyBoardAscii() {
     else ok = legacyCopy(text);
   } catch { ok = legacyCopy(text); }
   showToast(ok ? "已複製 ASCII 盤面" : "複製失敗");
+}
+
+// ── Relay links: share mid-solve progress as a URL ──────────────────────────
+// The `r` parameter is three concatenated fields:
+//
+//   PP       pack code, 2 digits, from PACK_CODES
+//   IIII     level index, 4 digits
+//   payload  base64url of one bitstream: n*n mask bits (1 = crossed out,
+//            row-major), then n nibbles, one per row, holding that row's cat
+//            column + 1 (0 = no cat found in that row yet)
+//
+// Pulling the cats out of the grid is what makes this fit a BBS line. At most
+// one cat per row is reachable — attemptPlaceCat() only writes CAT when the
+// guess equals solution[r] — so 4 bits of column index per row beats spending
+// a second bit on every one of the n*n cells. A 12x12 is 144 + 48 = 192 bits =
+// 32 chars, putting the whole URL at 74.
+//
+// WRONG folds into MARK: a relayed board hands over the deduction ("no cat
+// here"), not the sender's penalty, and the recipient starts on full hearts.
+// HYPO is scratch and encodes as EMPTY, matching how startLevel() drops it.
+const PACK_CODES = {
+  "6": 1, "7": 2, "8": 3, "9": 4, "10": 5, "11": 6, "12": 7, hard: 8, bad: 9,
+};
+// Frozen and append-only: these codes are baked into every link ever shared,
+// so a new pack takes the next unused number. Renumbering breaks old links.
+const PACK_BY_CODE = Object.fromEntries(
+  Object.entries(PACK_CODES).map(([pack, code]) => [code, pack]));
+
+function encodeRelayPayload(board, n) {
+  const bits = [];
+  for (let r = 0; r < n; r++)
+    for (let c = 0; c < n; c++)
+      bits.push(board[r][c] === MARK || board[r][c] === WRONG ? 1 : 0);
+  for (let r = 0; r < n; r++) {
+    const col = board[r].indexOf(CAT);
+    const nibble = col < 0 ? 0 : col + 1;
+    for (let k = 3; k >= 0; k--) bits.push((nibble >> k) & 1);
+  }
+  const bytes = new Uint8Array(Math.ceil(bits.length / 8));
+  bits.forEach((bit, i) => { if (bit) bytes[i >> 3] |= 1 << (7 - (i & 7)); });
+  return bytesToBase64Url(bytes);
+}
+
+// Returns null rather than a half-built board for anything the level can't
+// hold, so a mangled or hand-edited link fails visibly instead of quietly
+// dropping a cat somewhere illegal.
+function decodeRelayPayload(str, n) {
+  const bytes = base64UrlToBytes(str);
+  if (bytes.length < Math.ceil((n * n + 4 * n) / 8)) return null;
+  const bit = (i) => (bytes[i >> 3] >> (7 - (i & 7))) & 1;
+
+  const board = Array.from({ length: n }, () => Array(n).fill(EMPTY));
+  for (let r = 0; r < n; r++)
+    for (let c = 0; c < n; c++)
+      if (bit(r * n + c)) board[r][c] = MARK;
+
+  for (let r = 0; r < n; r++) {
+    let nibble = 0;
+    for (let k = 0; k < 4; k++) nibble = (nibble << 1) | bit(n * n + r * 4 + k);
+    if (nibble === 0) continue;
+    if (nibble > n) return null;
+    board[r][nibble - 1] = CAT;  // a cat wins over its own mask bit
+  }
+  return board;
+}
+
+function bytesToBase64Url(bytes) {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlToBytes(str) {
+  const b64 = str.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
+  const bin = atob(b64 + pad);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function buildRelayUrl() {
+  if (!state.board || !state.n || !state.pack || !state.levelIdx) return null;
+  const code = PACK_CODES[state.pack];
+  if (!code || state.levelIdx > 9999) return null;
+  const url = new URL(location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("r", String(code).padStart(2, "0")
+    + String(state.levelIdx).padStart(4, "0")
+    + encodeRelayPayload(state.board, state.n));
+  return url.toString();
+}
+
+async function copyRelayLink() {
+  const url = buildRelayUrl();
+  if (!url) return;
+  let ok = true;
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(url);
+    else ok = legacyCopy(url);
+  } catch { ok = legacyCopy(url); }
+  showToast(ok ? "已複製連結" : "複製失敗");
+}
+
+// Runs once at startup. Consumes ?r= if present, loading that level and
+// overlaying the decoded board on top of it. The query string is stripped
+// immediately so a later "重來" or level switch doesn't re-trigger it.
+async function applyRelayFromUrl() {
+  const r = new URLSearchParams(location.search).get("r");
+  if (!r) return;
+  history.replaceState(history.state, "", location.pathname);
+  const pack = PACK_BY_CODE[parseInt(r.slice(0, 2), 10)];
+  const idx = parseInt(r.slice(2, 6), 10);
+  const payload = r.slice(6);
+  try {
+    if (!pack || !Number.isInteger(idx) || idx < 1 || !payload) throw new Error("bad link");
+    await startLevel(pack, idx);
+    if (state.regions?.length !== state.n) throw new Error("bad level");
+    const board = decodeRelayPayload(payload, state.n);
+    if (!board) throw new Error("bad payload");
+    state.board = board;
+    renderBoard();
+    renderHearts();
+  } catch {
+    showSelectScreen();
+    showToast("連結格式錯誤");
+  }
 }
 
 let toastTimer = null;
