@@ -61,6 +61,7 @@ const EMPTY = 0, MARK = 1, CAT = 2, HYPO = 3, WRONG = 4;
 const HEARTS_MAX = 3;
 const DOUBLE_TAP_MS = 300;
 const DRAG_THRESHOLD_PX = 6;
+const IOS_INSTALL_ACK_KEY = "meowdoku_ios_install_acknowledged";
 
 // ── Color math (sRGB <-> linear <-> OKLab) ──────────────────────────────────
 // Used to derive a dimmed variant of any user-chosen region color. Matrices
@@ -314,6 +315,8 @@ const el = {
   importText: document.getElementById("import-text"),
   btnImportCancel: document.getElementById("btn-import-cancel"),
   btnImportConfirm: document.getElementById("btn-import-confirm"),
+  iosInstallModal: document.getElementById("ios-install-modal"),
+  btnIosInstallOk: document.getElementById("btn-ios-install-ok"),
 };
 
 // ── Audio ────────────────────────────────────────────────────────────────────
@@ -553,6 +556,16 @@ function closeSettings() {
   hideImportPanel();
 }
 
+function shouldShowIosInstallPrompt() {
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches
+    || navigator.standalone === true;
+  if (!isIOS || isStandalone) return false;
+  try { return localStorage.getItem(IOS_INSTALL_ACK_KEY) !== "true"; }
+  catch { return true; }
+}
+
 async function init() {
   // Bind all event listeners synchronously BEFORE any async operations so that
   // browser caching of an older JS file can never leave buttons unresponsive.
@@ -596,6 +609,10 @@ async function init() {
   el.btnHelpOpen?.addEventListener("click", () => {
     closeSettings();
     el.helpModal.classList.remove("hidden");
+  });
+  el.btnIosInstallOk?.addEventListener("click", () => {
+    try { localStorage.setItem(IOS_INSTALL_ACK_KEY, "true"); } catch { }
+    el.iosInstallModal.classList.add("hidden");
   });
   el.btnPaletteReset?.addEventListener("click", resetPalette);
 
@@ -671,6 +688,8 @@ async function init() {
   el.board.addEventListener("pointermove", onPointerMove);
   el.board.addEventListener("pointerup", onPointerUp);
   el.board.addEventListener("pointercancel", onPointerUp);
+
+  if (shouldShowIosInstallPrompt()) el.iosInstallModal.classList.remove("hidden");
 
   try {
     state.levelManifest = await fetchLevelManifest();
