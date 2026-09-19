@@ -556,14 +556,31 @@ function closeSettings() {
   hideImportPanel();
 }
 
-function shouldShowIosInstallPrompt() {
-  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
+function isIOSDevice() {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent)
     || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function shouldShowIosInstallPrompt() {
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches
     || navigator.standalone === true;
-  if (!isIOS || isStandalone) return false;
+  if (!isIOSDevice() || isStandalone) return false;
   try { return localStorage.getItem(IOS_INSTALL_ACK_KEY) !== "true"; }
   catch { return true; }
+}
+
+function preventIOSDoubleTapZoom() {
+  if (!isIOSDevice()) return;
+  let lastSingleTouchEnd = 0;
+  document.addEventListener("touchend", (event) => {
+    if (event.touches.length !== 0 || event.changedTouches.length !== 1) {
+      lastSingleTouchEnd = 0;
+      return;
+    }
+    const now = Date.now();
+    if (now - lastSingleTouchEnd <= DOUBLE_TAP_MS) event.preventDefault();
+    lastSingleTouchEnd = now;
+  }, { passive: false });
 }
 
 async function init() {
@@ -572,6 +589,7 @@ async function init() {
   updateToggleUI();
   renderPaletteEditor();
   updateUndoRedoButtons();
+  preventIOSDoubleTapZoom();
   try { history.replaceState({ screen: "select" }, ""); } catch { }
 
   el.btnBack.addEventListener("click", () => history.back());
