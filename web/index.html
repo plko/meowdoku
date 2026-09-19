@@ -13,6 +13,7 @@
 <body>
   <header class="app-header">
     <h1>🐱 Meowdoku</h1>
+    <button id="btn-clear-cache" class="icon-btn" aria-label="清除快取" title="清除快取">🗑️</button>
   </header>
 
   <main id="app">
@@ -149,6 +150,12 @@
 
   <div id="toast" class="toast hidden"></div>
 
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" })
+        .catch((error) => console.error("Service worker registration failed", error));
+    }
+  </script>
   <script src="game.js"></script>
 </body>
 
